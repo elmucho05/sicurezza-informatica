@@ -2,9 +2,10 @@
 
 ## Configurazione macchina virutale su localhost
 
-1. `ip a `
+1. Visualizzare lo stato della scheda di rete della vm e relativo indirizzo : `ip a `
 2. non dovresti avere alcun ip associato alla scheda ens3, perché la scheda è giù, la devi accendere con `sudo ip link set ens3 up`
-3. dopodiché devi dargli un ip in dhcp trmaite `dhclient ens3`
+3. dopodiché devi dargli un ip in dhcp trmaite : `sudo dhclient ens3`
+4. Controllare se effettivamente adesso c'è una configurazione attiva :`ip a`
 
 
 ### Creazione ambiente virtuale
