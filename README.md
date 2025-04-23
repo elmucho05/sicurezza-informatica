@@ -8,7 +8,7 @@
 4. Controllare se effettivamente adesso c'è una configurazione attiva :`ip a`
 
 
-### Creazione ambiente virtuale
+## Creazione ambiente virtuale
 E' possibile che lo script se viene eseguito dia errori come "questo pacchetto non è stato trovato".
 Questo perché mancano le librerie che nello script vengono importate.
 
