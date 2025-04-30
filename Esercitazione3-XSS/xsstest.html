@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head><title>XSS Test</title></head>
+<body>
+  <div id="output"></div>
+
+  <script>
+    fetch("http://localhost:8000/echo/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "<script>alert(1)</script>",
+        age: 30,
+        secret_name: "Clark Kent"
+      })
+    })
+    .then(res => res.json())
+    .then(data => {
+      // UNSAFE: directly injecting into innerHTML
+      document.getElementById("output").innerHTML = data.name;
+    });
+  </script>
+</body>
+</html>
