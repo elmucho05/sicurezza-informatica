@@ -651,6 +651,14 @@ Siccome il buffer ammette 500byte, uso python per generare tante A:
 
 
 ***Esempio 2***
+**DESCRIZIONE DEL EXPLOIT**:
+L’exploit funziona creando un buffer più grande di quello previsto nel programma vulnerabile, che contiene:
+- una **NOP sled** all’inizio (cioè tante istruzioni “no operation” che servono ad aumentare la probabilità che il flusso di esecuzione arrivi alla shellcode),
+- la **shellcode vera e propria** al centro,
+- e tanti **indirizzi di ritorno uguali** alla fine, calcolati per far puntare l’EIP alla zona della NOP sled o alla shellcode.
+Per sapere quale indirizzo usare per sovrascrivere l’EIP, la funzione `sp()` prende l’attuale valore dello stack pointer, e da lì viene **sottratto un offset** per avvicinarsi al punto dove sarà posizionato il buffer nello stack del programma vulnerabile. Poiché l’indirizzo non è noto con certezza, si fa un brute-force su vari offset (es: da 200 a 400) fino a trovare quello giusto.
+
+Quando si trova il valore corretto, l’EIP viene sovrascritto con l’indirizzo che punta alla shellcode, che viene quindi eseguita e apre una shell.
 `exploit.c`
 ```c
 #include<stdlib.h>
@@ -681,6 +689,7 @@ int main(int argc, char *argv[])
 	offset = atoi(argv[1]);  /* get the offset they specified */
 	esp    = sp();           /* get the stack pointer */
 	ret    = esp-offset;     /* sp - offset = return address *///valore con cui sovrascriverò l'IP del programma vulnerabile
+	//E' ret il valore dell'indice nel buffer dove si trova la shellcode
 
 	printf("Stack pointer: 0x%x\n", esp);
 	printf("       Offset: 0x%x\n", offset);
@@ -743,9 +752,9 @@ unsigned long sp(void)
 - `esp` che punta alla testo dello stack, *e la copia in `eax`*
 - Per come funziona la convenzione delle chiamate, tu quando fai una `jal funzione, ra`, il valore di ritorno della funzione verrà salvata in `eax`. 
 
-QUINDI in questo caso
+QUINDI in questo caso:
   
-3. **Quando invoco la funzione `sp` questa mi ritorna l'indirizzo alla testa dello stack**
+3. **Quando invoco la funzione `sp()` questa mi ritorna l'indirizzo alla testa dello stack**
 
 ```c
 	offset = atoi(argv[1]);  /* get the offset they specified */
@@ -759,9 +768,14 @@ QUINDI in questo caso
 
 **`ret = esp-offset`: perché questo valore?**
 ### IMPORTANTE
-- Exploit manda in esecuzione vulnerable. **Supponiamo che OS mappi su area di memoria contigua i segmenti di processi che vengono mandati in esecuzione in modo consecutivo.**
-	- **allora posso** *calcolare un indirizzo che è valido per lo stack del programma vulnerabile **partendo*** da un indirizzo che è valido per lo stack di exploit e spostandomi un pochino. 
+- `exploit.c` manda in esecuzione `vulnerable.c`. **Supponiamo che SO mappi su area di memoria contigua i segmenti di processi che vengono mandati in esecuzione in modo consecutivo.**
+	- **allora posso** calcolare un indirizzo che è valido per lo stack del `programma vulnerabile` *partendo*** da un indirizzo che è valido per lo stack di `exploit` e spostandomi un pochino. 
 		- di quanto mi scosto? BOH
+
+![[Recording 20250518210029.m4a]]
+
+
+**`ret`** è il valore che sostituisce il `eip`. RET dice "salta questo indirizzo,quello della shellcode".
 
 
 4. **Allochiamo il buffer di 600 caratteri**
@@ -797,6 +811,17 @@ QUINDI in questo caso
 Riempio la prima metà del buffer con `\x90` : `0x90` la riempio di `nop`.
 - Se il mio IP punta ad un'istruzione che è una NOP, non fa niente e semplicemente *incrementa l'IP di 1*.
 - **quindi il mio buffer fino alla prima metà è pieno di `nop`, dalla seconda metà è pieno di indirizzi di ritorno**
+
+
+![[Recording 20250518205505.m4a]]
+
+![[Recording 20250518205647.m4a]]
+
+
+
+### Invece di puntare **esattamente all’inizio della shellcode**, puntiamo **a un punto qualsiasi dentro la NOP sled**.  
+- Il processore comincerà a eseguire `NOP`, `NOP`, `NOP`… fino a quando **arriverà alla shellcode** e la eseguirà.
+
 
 7. **Circa a metà del buffer copio la shellcode**
 ```c
@@ -834,7 +859,7 @@ for i in `seq 200 400`; do setarch i386 -R ./exploit $1; done
 
 Itero su 200 fino a 400 e manderò in esecuzione 200 volte il mio exploit.
 
-**`-R ./exploit $i`** : server per fare in modo che **il SO allochi vulnerable su un'area di memoria contigua a exploit**
+**`-R ./exploit $i`** : serve per fare in modo che **il SO allochi vulnerable su un'area di memoria contigua a exploit**
 
 Se non mettiamo questo flag, il SO mitiga questi problemi, alloca le aree in modo casuale.
 
@@ -859,6 +884,188 @@ Se io ora provo a mandare in esecuzione la mia exploit a offset 332
 ### Slide 46
 
 Guarda bene la figura
+
+Questa tecnica è **una forma di shellcode autoregolante**:  
+usa JMP/CALL/POP per trovare dinamicamente l’indirizzo della stringa `/bin/sh` nel buffer, senza hardcodare offset o indirizzi assoluti (che cambierebbero a seconda dell’ambiente). È **più portabile e affidabile**.
+
+
+
+
 ![[Pasted image 20250517093321.png]]
 
-- perché 
+La figura mostra il **buffer iniettato**, con le istruzioni e i dati:
+- **JMP** → salta al punto in cui c'è la CALL.
+- **CALL** → salta all'inizio del codice shellcode, ma prima salva l'indirizzo della stringa `/bin/sh` sullo stack.
+- **POP** → recupera quell’indirizzo e lo mette in un registro.
+    
+- Poi segue il codice che costruisce i parametri per eseguire `/bin/sh`.
+
+
+ 
+1. Tramite un buffer overflow, si sovrascrive il **valore dell’IP** (Instruction Pointer) o del **return address**. 
+	- **L’IP viene fatto puntare all’inizio del buffer** in cui si è iniettato del codice (shellcode).
+	- La prima istruzione della shellcode è un **JMP**: salta direttamente a un'istruzione successiva nel buffer.
+   
+2. Dopo il salto, si arriva a una **CALL**, che è un’istruzione che:
+	- Salva l’indirizzo **dell’istruzione successiva** (quella dopo la CALL) sullo stack.
+    - Salta all’indirizzo indicato (in questo caso, alla shellcode vera e propria).
+
+3. “La CALL salva l’indirizzo successivo ad essa in cima allo stack…”
+	- La CALL scrive sullo stack il valore dell’IP che punta alla stringa **`/bin/sh`** (quindi conosciamo quell'indirizzo, è nel buffer).
+	- Dopo la CALL, l’IP punta all'inizio del codice vero della shellcode.
+
+4. “La POP recupera l’indirizzo in cima allo stack…”
+	- Subito dopo, la shellcode esegue una **POP**, che tira giù l'indirizzo di `/bin/sh` dallo stack e lo mette in un registro (ad es. `eax`).
+	- Questo indirizzo sarà usato per eseguire il comando `/bin/sh`.
+
+5. “Ora si può iniziare con il codice vero e proprio…”
+	- - A questo punto inizia la shellcode vera e propria: prepara i registri e i parametri necessari per la syscall `execve("/bin/sh", NULL, NULL)`.
+	- I parametri vengono costruiti usando l'indirizzo ottenuto con la POP.
+
+
+
+
+  
+
+E questo può essere un esempio, no? Facciamo finta che nel `IP` ci sia l'indirizzo di ritorno ripetuto tante volte, quindi questo è l'indirizzo di ritorno con cui vado a sovrascrivere un istruction pointer. Facciamo finta che questo indirizzo punti alla Jump all'inizio. Ora dalla **Jump** io salto direttamente alla **call**.
+![[Pasted image 20250518210743.png]]
+
+Perché magari **invece** **di** farmi una **nop** **sled**, decido di di fare **tante** **Jump** ***sempre allo stesso indirizzo all'inizio del mio buffer.***
+
+Perché magari è difficile beccare l'inizio del mio buffer, ma qua dentro posso fare quello che voglio, *quindi magari non so esattamente l'indirizzo della Jump*, ma **dalla Jump alla call sono io che decido ogni byte**. Quindi fare dei salti relativi dentro al buffer è facile.
+
+**la Call ha anche un'altro vantaggio, no, una call cosa fa? Sposta l'IP, quindi chiama una funzione, quindi vuol dire che l'indirizzo successivo verrà pushato sullo stack, quindi io mi ritrovo sullo stack l'indirizzo della stringa /bin/sh.**
+
+**La call a una POP che significa che io mi riprendo l'indirizzo della stringa /bin/sh dallo stack** e **lo porto in un registro**. Lo porto da qualche parte e qua posso lanciare il comando chiamando la primitiva del sistema operativo che mi consente di mandare in esecuzione il programma il cui nome è salvato nella stringa puntata dal registro in cui ho fatto la pop. Eh, però ribadisco, è un esempio che lascio poi il tempo che trova, no. 
+
+Bene, se capite come funziona, ma è solo un esempio di Shell Code. Altre shelcod funzionano in modo diverso.
+
+OKE, qua ci sono le tecniche ausiliarie che già abbiamo visto utilizzare una nop S LED all'inizio del buffer.
+
+E ripetere tante volte l'indirizzo di ritorno alla fine del buffer, il buffer che abbiamo usato noi che viene creato dal programma EXPLOIT. Se ci pensate più o meno questa struttura non è in scala perché ci sono tante note, quasi 300 byte. L'indirizzo di ritorno è ripetuto. Tante volte circa, 300/4 po meno e in mezzo mi ritrovo con la mia scelta Eh. Nuova struttura è quella.
+
+
+Usare una nop sled fatta da  0x90 è qualcosa che spesso adesso si evita perché non è proprio comune che all'interno di un'area di memoria ci sia un'area bella, lunga, di centinaia di byte contigui tutti a zero X 90 ed è anche una tecnica che è molto utilizzata dagli attaccanti per semplificarsi la vita in casi di buffer overflow.
+
+D**i buffer work, quindi, molti antivirus moderni**, molti anti malware moderni, **quando** **vedono** un'area di **memoria**, soprattutto se è nello **stack** **con tanti 0x90** uno dopo l'altro tendono ad alterarsi, OK?
+
+**Si possono utilizzare delle altre soluzioni?**
+
+Magari all'inizio metto qualche 0x 90 oppure ne metto uno sparso, non faccio una nop sled tutta di  0x 90 ma intervallo agli 0x90 delle altre operazioni, che siano però strutturati in modo da non creare confusione.
+
+**fare delle operazioni inutili su registri inutili per far slittare l'ip**
+*Per esempio, posso prendere un registro della CPU che non viene normalmente utilizzato  nella calling Convention, uno di quei registri generici e chiamare una `inc`su quel registro, una increment su quel registro, magari seguito da una decrement su quel registro. OK,* 
+
+*quindi faccio Tante Istruzioni che sembrano istruzioni normali che però eseguite insieme, non hanno nessun effetto, non cambiano lo stato del sistema, ma mi fanno slittare in avanti gli instruction pointer, fino ad arrivare alla mia **shellcode**.*
+
+
+#### Altri tipi di corruzione della memoria 
+
+I buffer overflow non sono limitati alla memoria stack. E’ possibile causare **buffer overflow anche nel segmento heap**: 
+- *Non esistendo un indirizzo di ritorno da sovrascrivere*, questi attacchi **si ottengono memorizzando variabili “importanti” successivamente a un buffer suscettibile all’overflow**
+- E’ possibile **causare** **buffer** **overflow** **sfruttando** i **format** **string** che **sono** **utilizzati** da funzioni che prevedono la formattazione (es., printf(), scanf())
+- L’elemento comune delle funzioni vulnerabili a questo attacco è il tipo di parametri che richiedono: un numero variabile di argomenti che dipendono dal format string stesso
+
+
+
+## Contromisure ai buffer overflow
+Ci sono un po di contromisure, alcune delle quali le abbiamo già incontrate. Intanto a livello di programmazione bisognerebbe evitare di scrivere delle cavolate come quelle che abbiamo sfruttato.
+
+Quelle erano molto facili, funzioni come la `strcpy`, funzioni come la `gets`, sono istruzioni che adesso non vi si più neanche compilare. Se adesso provate a compilare qualcosa con una `gets` e su un compilatore moderno, il compilatore si rifiuta. OK, la get tess l'hanno tolta.
+
+Difatti nei programmini, ad esempio, ho sostituito quella che fino all'anno scorso erano anche S con una `fgets`, passando una dimensione.
+
+Bisogna stare attenti quando si programma alcuni errori sono facili da rilevare, altri sono un po più complicati. Insomma, sicuramente quando prendo input da fonti non fidate, quindi da ogni utente vi leggo da file, li prendo dalla rete e se sono input di dimensioni variabili dovrei sempre controllare la dimensione dell'input prima di copiarli da qualche parte, OK?
+
+Co sono compilatori che aiutano in questa cosa.
+
+Talvolta ci sono dei compilatori che semplicemente sotto il cofano prendono delle funzioni, per esempio la `strcpy` e, se riescono a determinare da un'analisi statica del codice la dimensione dei buffer in cui voi copiate i dati, sostituiscono quella `strcpy` con una in cui il numero è accodato.
+
+
+A volte queste cose quando il Compilatore riesce a capirle ve le fa automaticamente, dipende anche dal compilatore.
+
+Il compilatore può fare anche altre cose. Stai cannari per esempio di cui parleremo dopo.
+
+
+E anche il sistema operativo può fare cose, per esempio controllare, suonare la memoria, eseguibile o no, oppure applicare la randomizzazione dell'allocazione dello spazio degli indirizzi per evitare che processi vengano mappati su aree di memoria continue.
+
+Se avessi avuto la randomizzazione dello spazio degli indirizzi?
+
+Il processo con il ciclo Four non va più bene.
+
+Magari beccando l'offerta giusto, funzionerebbe lo stesso ogni tanto l'offset non è più limitato a qualche centinaia di byte. I love set lo devo pescare in un range enorme, non posso neanche esaurire tutti gli offset disponibili in un ciclo for che è un offset che in questa esecuzione non.
+
+
+Va bene, magari va bene nella prossima.
+
+
+Perché le aree di memoria non solo non sono contigue, ma vengono sempre allocate in posizioni relative casuali, completamente diverse fra loro, hanno ogni esecuzione.
+
+
+OK quindi anche il sistema operativo ha degli strumenti efficaci per rendere questi attacchi complicati.
+
+
+OK, si possono eseguire controlli? Si può testare il codice, sono alcuni strumenti che testano il codice non solo con degli unit test. Il problema degli uni test è che siete voi a definire gli input il cui testato il vostro codice, quindi in genere testate il vostro CO.
+
+
+
+Con degli input che riuscite a prevedere, verosimilmente, se voi prevedete che il vostro codice riceverà un certo input a meno di qualche errore di programmazione, bene o male quella condizione riuscirete anche a gestirla dentro al codice. Se siete voi stessi che vi iscrivete ai vostri primi test, Eh.
+
+
+Degli strumenti, in particolare, si chiamano fazzer, utilizzano tecniche di fuzzing che fondamentalmente significa eseguire un programma tante volte.
+
+
+Con un'insieme enorme di input, anche generati casualmente.
+
+
+Quindi voi prendete un programma Adams dell'altra volta o vanerabon e lo esegui chi non fa magari gli date. Qualche esempio di input e a partire da questi esempi. Il PAD si genera milioni di combinazioni possibili di lunghezza di tipo di dato e esegue tante volte il programma con.
+
+
+Questi dati.
+
+
+Quindi puzzle, possono essere utili nell'identificare dei casi particolari delle combinazioni di input che voi non avevate previsto e che causano un comportamento indeterminato previsto nel nostro codice.
+
+
+Molto utili, ma non è che avete.
+
+Una garanzia di una copertura completa? Ovviamente no, cioè d'estate tante volte, con tanti input diversi, però non vi dà la garanzia che che voi abbiate testato tutti i casi possibili.
+
+• A livello di programmazione (“secure programming”) 
+− Evitare errori macroscopici 
+− Rendere più difficile la possibilità di vulnerabilità che possano essere sfruttate da programmi malevoli 
+− Usare librerie “protette” 
+	• Protezione effettuata a livello di compilatore 
+	• Protezione effettuata a livello di sistema operativo 
+	• Uso di tool
+
+
+I buffer overflow più macroscopici a livello di memoria stack sono possibili in quanto non viene effettuato un controllo sulla quantità di byte inseriti nei buffer stessi 
+• Se la quantità di dati eccede le dimensioni del buffer e non esiste alcun controllo che lo rilevi, si rende possibile un overflow
+
+
+***Ripendendo l'esempio di prima,ecco alcune mitigazioni***
+Controllare la dimensione dei dati ogni volta che si scrive in un buffer 
+• Ricercare basi di codice sorgente per nomi di funzioni insicure 
+• Utilizzare strumenti automatici per l’analisi statica del codice sorgente 
+• Esempi: Clockwork, CodeSonar, Coverty, Parasoft, PolySpace, … 
+
+*• NON ignorare warning emessi dal compilatore!*
+
+
+***Fuzzing***
+• Eseguire il codice molte volte con input generati in modo (parzialmente) pseudo-casuale 
+• Consente di identificare errori nella validazione degli input, inclusi quelli basati sul mancato controllo della dimensione 
+• Testare tutti i possibili input (anche se letti da file, da database, da rete) con stringhe molto lunghe 
+• Processo (parzialmente) automatizzabile 
+	• libFuzzer, AFL, cargo-fuz, … 
+• Utile anche per identificare vulnerabilità e sviluppare exploit
+
+Utilizzo di funzioni “protette” 
+– `strncpy()` invece di `strcpy()` 
+	– Anche se bisogna aggiungere controlli su eventuali troncamenti
+
+Utilizzo di funzioni di libreria “sicure” – **Libsafe** della **Lucent** **Technologies**: contiene le versioni modificate di funzioni di libreria vulnerabili come strcpy() 
+	– Utile, anche se protegge da un insieme ristretto e non assicura protezione nel caso in cui il codice sia vulnerabile
+
+
